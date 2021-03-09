@@ -19,14 +19,14 @@ jobs:
 
     name: Build OpenWrt firmware
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v2.3.4
         with:
           ref: master
 
@@ -49,12 +49,95 @@ jobs:
           sed -i 's/#src-git helloworld/src-git helloworld/g' ./feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          
+      - name: Update components
+        run: |
+          git clone --depth=1 https://github.com/openwrt/packages op_packages
+          rm -r package/feeds/packages/netdata
+          mv op_packages/admin/netdata package/feeds/packages/
+          rm -r op_packages
+          
+          cd $GITHUB_WORKSPACE/package/lean/UnblockNeteaseMusicGo
+          # sed -i 's/0.2.6/0.2.7/g' Makefile
+          
+          cd ~
+          git clone --depth 1 https://github.com/lisaac/luci-app-dockerman dockerman
+          mv dockerman/applications/luci-app-dockerman $GITHUB_WORKSPACE/package/lean/
+          rm -r dockerman
 
       - name: Generate configuration file
-        run: make defconfig
+        run: |
+          rm -f .config* 
+          
+          # 常用软件包:
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_nano=y
+          CONFIG_PACKAGE_screen=y
+          CONFIG_PACKAGE_tree=y
+          CONFIG_PACKAGE_vim-fuller=y
+          CONFIG_PACKAGE_bash=y
+          EOF
+          
+          # IPv6支持
+          cat >> .config << EOF
+          CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
+          CONFIG_PACKAGE_ipv6helper=y
+          CONFIG_PACKAGE_iputils-traceroute6=y
+          EOF
+          
+          # ebtables
+          cat >> .config << EOF
+          CONFIG_PACKAGE_ebtables=y
+          CONFIG_PACKAGE_ebtables-utils=y
+          EOF
+          
+          # 常用插件
+          cat >> .config << EOF
+          # CONFIG_PACKAGE_luci-app-adbyby-plus is not set
+          CONFIG_PACKAGE_luci-app-frpc=y	
+          CONFIG_PACKAGE_luci-app-kodexplorer=y	
+          CONFIG_PACKAGE_luci-app-minidlna=y
+          CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_V2ray_plugin=y
+          CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Trojan=y
+          CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Redsocks2=y
+          CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Kcptun=y
+          CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_NaiveProxy=y
+          CONFIG_PACKAGE_luci-app-ttyd=y
+          CONFIG_PACKAGE_luci-app-netdata=y
+          CONFIG_PACKAGE_luci-app-wrtbwmon=y
+          CONFIG_PACKAGE_luci-app-dockerman=y
+          EOF
+          
+          # 多文件系统支持:
+          cat >> .config << EOF
+          CONFIG_PACKAGE_kmod-fs-ntfs=y
+          CONFIG_PACKAGE_kmod-fs-squashfs=y
+          EOF
+          
+          # 固件压缩
+          cat >> .config << EOF
+          CONFIG_TARGET_IMAGES_GZIP=y
+          CONFIG_TARGET_ROOTFS_PARTSIZE=512
+          EOF
+          
+          # 编译UEFI固件
+          cat >> .config << EOF
+          # CONFIG_GRUB_IMAGES is not set
+          EOF
+          
+          # 取消编译VMware镜像
+          cat >> .config << EOF
+          # CONFIG_VMDK_IMAGES is not set
+          EOF
+          
+          sed -i 's/^[ \t]*//g' .config
+          make defconfig
+          sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
 
       - name: Make download
         run: |
+          [ -d package/lean/luci-app-dockerman ] && echo "Successfully installed dockerman" || echo "Failed to install dockerman"
           make download -j8
           find dl -size -1024c -exec rm -f {} \;
 
@@ -98,12 +181,3 @@ jobs:
           name: OpenWrt_firmware
           path: ./bin/targets/
   
-
-      - name: Upload release asset
-        if: github.event == 'release'
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.YOURTOKEN }}
-          file: ./artifact/firmware/*
-          tag: ${{ github.ref }}
-          file_glob: true
